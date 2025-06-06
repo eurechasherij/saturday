@@ -95,13 +95,13 @@ Follow these steps to set up and run the project:
 
 2. **Install Dependencies**:
    ```bash
-   npm install
+   bun install
    ```
 
 3. **Run the Project**:
    Start both frontend and backend concurrently using:
    ```bash
-   npm run start
+   bun run start
    ```
 
    - The frontend runs on port 5173.
@@ -109,13 +109,3 @@ Follow these steps to set up and run the project:
 
 4. **Configuration**:
    Ensure you have a `.env` file in the `server/` directory with the necessary environment variables for database connection, API keys for OpenAI, and Binance Futures.
-
-### License
-
-The project is proprietary (not open source), All rights reserved.
-
-© 2024. Saturday Autotrade. All rights reserved.
-
----
-
-By following this README, you should be able to understand the project's functionality and get it up and running quickly.# saturday
