@@ -1,7 +1,35 @@
-server/node_modules/
-server/.env
-server/package-lock.json
-client/node_modules/
-client/package-lock.json
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
 node_modules/
-package-lock.json
+dist/
+.vite/
+*.local
+
+# Data (large, regeneratable)
+data/parquet/
+data/cache/
+data/backtests/
+data/raw/
+
+# Env
+.env
+.env.local
+*.env
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Legacy (archived old codebase)
+legacy/server/node_modules/
+legacy/client/node_modules/
+legacy/server/.env

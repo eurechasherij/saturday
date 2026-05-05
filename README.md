@@ -1,111 +1,100 @@
-# Saturday Autotrade
+# Saturday
 
-Saturday Autotrade is an AI-driven cryptocurrency futures trading bot that uses OpenAI's GPT models to generate trading signals and automatically execute trades on Binance Futures. The bot supports automated AI-driven trading as well as manual trade input capabilities, with a focus on real-time monitoring and performance tracking.
+AI-driven crypto futures backtesting & research tool.
 
-## Overview
+> **Status:** v0.1 rebuild complete. Old Go/MongoDB/React code archived in [`legacy/`](legacy/).
+> Architecture and goals: [DESIGN.md](DESIGN.md).
 
-### Architecture and Technologies
+## What it does
 
-Saturday Autotrade is a comprehensive system designed to facilitate automated and manual cryptocurrency trading with advanced AI capabilities. Here’s an overview of its architecture and technologies:
+- Ingests bulk historical OHLCV from Binance Vision (free, no API key, back to 2017).
+- Computes structured market features: indicators (RSI, MACD, ATR, OBV), Fair Value Gaps, Order Blocks, swing points.
+- Hands those features to an LLM (default: local **Ollama**, fallback: OpenAI / Anthropic) and asks for a structured trade signal.
+- Replays the loop bar-by-bar over historical data — a backtest with the AI in the loop.
+- Caches every prompt → response pair, so repeated backtests are free.
+- Surfaces the entire decision trail in a React dashboard: every trade shows the exact prompt, response, and features the AI saw.
 
-- **Frontend**: Built with React.js and Vite, using shadcn-ui component library and Tailwind CSS for modern, responsive design. Zustand is used for state management, while SWR handles intelligent data fetching.
-- **Backend**: Developed with Golang and Gin for high-performance API endpoints, supporting Express-based REST API interactions. The backend handles trade execution and market data retrieval from Binance.
-- **Database**: Utilizes MongoDB for persistent storage of trading activities, performance analytics, and market data caching.
-- **APIs and Real-Time Data**: Integrates with OpenAI API for AI-driven trading signals and Binance Futures API for market data and trade execution. Utilizes WebSocket connections for real-time data updates.
-- **Directory Structure**: The project is divided into two main parts:
-  - `client/`: Contains the React.js frontend.
-  - `server/`: Houses the Golang backend, facilitating API endpoints and database interactions.
+**No live trading. The exchange is read-only.**
 
-## Features
+## Quickstart
 
-Saturday Autotrade offers a variety of features to enhance trading functionality and user interaction:
+### Prerequisites
 
-### Main Dashboard Layout
+- Python 3.12+
+- [uv](https://github.com/astral-sh/uv) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- Node 20+ and [bun](https://bun.sh) (or npm/pnpm)
+- [Ollama](https://ollama.com) running locally (recommended default), or an OpenAI/Anthropic API key
 
-- **Left Panel - Trading Controls**: 
-  - Cryptocurrency selector dropdown
-  - Auto/Manual mode toggle switch
-  - Testnet/Real trading toggle
-  - Confidence threshold slider
-  - Timeframe selector checkboxes (5m, 15m, 30m, 1h, etc.)
-  - "Generate Signal" button for AI analysis
-  - Manual JSON input for direct signal input
-  - "Execute Trade" button
+### Backend
 
-- **Center Panel - Signal Display**:
-  - Displays trading signals with detailed parameters and AI analysis
+```bash
+cd backend
+cp .env.example .env       # only needed if you want OpenAI/Anthropic fallback
+uv sync
+uv run uvicorn app.main:app --reload --port 3001
+```
 
-- **Right Panel - Live Information**:
-  - Real-time transaction log, position updates, and market data status
+> The backend runs out of the box with no `.env` if Ollama is reachable at
+> `http://localhost:11434`. Edit `.env` only to swap the default provider or
+> add API keys. See [`backend/.env.example`](backend/.env.example) for the full list.
 
-- **Bottom Panel - Performance Metrics**:
-  - Displays daily and all-time PnL, win/loss ratio, total trades, and performance streaks
+API will be at http://localhost:3001 — interactive docs at http://localhost:3001/docs.
 
-### User Interaction Flows
+### Frontend
 
-- **Automated Trading Mode**: 
-  Automatically generates and executes trades based on AI signals.
-- **Manual Trading Mode**: 
-  Users can manually request and execute AI-generated signals.
-- **Manual JSON Input Mode**: 
-  Advanced feature for direct signal input via JSON.
+```bash
+cd frontend
+bun install
+bun run dev
+```
 
-### Real-time Visual Features
+Open http://localhost:5173.
 
-- **Live Data Updates**: 
-  Cryptocurrency prices, PnL calculations, position statuses, and transaction logs update in real-time.
-- **Visual Indicators**: 
-  Color schemes, confidence meters, status badges, and progress bars enhance user understanding.
-- **Interactive Elements**: 
-  Hover effects, loading spinners, success/error notifications, and responsive design ensure a seamless user experience.
+### Pull a model for Ollama
 
-### Configuration & Settings
+```bash
+ollama pull qwen2.5:7b-instruct      # recommended — strong JSON adherence
+# or
+ollama pull llama3.1:8b
+```
 
-- **User-Adjustable Settings**: 
-  Allows customization of confidence thresholds, trading modes, environments, and AI models.
-- **Safety Features**: 
-  Includes warnings, balance verification, double confirmations for high-risk trades, and an emergency stop button for automated trading.
+### Ingest historical data
 
-### Error Handling & User Feedback
+From the UI: **Data** page → select a symbol → click *Ingest from Binance Vision*.
 
-- **Error Management**: 
-  Provides clear error messages and fallback interfaces for service unavailability.
-- **User Guidance**: 
-  Tooltips, help text, warning messages, and success confirmations guide the user.
+Or from the CLI:
 
-## Getting Started
+```bash
+cd backend
+uv run python -m app.data.binance_vision BTCUSDT 1h --start 2023-01 --end 2025-04
+```
 
-### Requirements
+## Project layout
 
-Ensure the following technologies and setups are available on your computer:
-- Node.js (for running the frontend and backend)
-- NPM (Node Package Manager)
-- MongoDB (for database)
-- Golang (for backend development)
+```
+saturday/
+├── DESIGN.md              # the source of truth for what we're building
+├── README.md              # you are here
+├── backend/               # Python / FastAPI / Polars / DuckDB
+│   ├── pyproject.toml
+│   └── app/
+│       ├── main.py
+│       ├── api/           # FastAPI routes
+│       ├── data/          # Binance ingest + Parquet store
+│       ├── patterns/      # FVG, OB, indicators
+│       ├── providers/     # Ollama / OpenAI / Anthropic adapters
+│       ├── signals/       # prompt building + caching
+│       ├── backtest/      # simulator + metrics
+│       └── schemas/       # pydantic models
+├── frontend/              # Vite + React + TS + Tailwind + shadcn
+│   └── src/
+│       ├── pages/
+│       ├── components/
+│       └── lib/
+├── data/                  # Parquet + caches (gitignored)
+└── legacy/                # archived old codebase, kept for reference
+```
 
-### Quickstart
+## License
 
-Follow these steps to set up and run the project:
-
-1. **Clone the Repository**:
-   ```bash
-   git clone <repository-url>
-   cd saturday-autotrade
-   ```
-
-2. **Install Dependencies**:
-   ```bash
-   bun install
-   ```
-
-3. **Run the Project**:
-   Start both frontend and backend concurrently using:
-   ```bash
-   bun run start
-   ```
-
-   - The frontend runs on port 5173.
-   - The backend runs on port 3000.
-
-4. **Configuration**:
-   Ensure you have a `.env` file in the `server/` directory with the necessary environment variables for database connection, API keys for OpenAI, and Binance Futures.
+ISC. Personal hobby project — no warranty, do not point this at real money.
