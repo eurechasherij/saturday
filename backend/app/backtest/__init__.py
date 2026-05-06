@@ -1,4 +1,5 @@
 from app.backtest.engine import run_backtest
+from app.backtest.manager import manager
 from app.backtest.metrics import compute_metrics
 from app.backtest.runs import (
     create_run,
@@ -18,6 +19,7 @@ __all__ = [
     "load_equity",
     "load_signals",
     "load_trades",
+    "manager",
     "run_backtest",
     "update_run",
 ]

@@ -48,25 +48,16 @@ class SignalRequest(BaseModel):
     model: str | None = None
 
 
-# JSON Schema we hand to providers that support structured output.
+# JSON Schema for structured output (v4+).
+# The engine computes entry/SL/TP from ATR — LLM only provides direction + confidence.
 SIGNAL_JSON_SCHEMA = {
     "type": "object",
     "properties": {
         "direction": {"type": "string", "enum": ["LONG", "SHORT", "NONE"]},
-        "entry": {"type": "number"},
-        "stop_loss": {"type": "number"},
-        "take_profit": {"type": "number"},
-        "risk_reward": {"type": "number"},
         "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
         "thoughts": {"type": "string"},
         "features_used": {"type": "array", "items": {"type": "string"}},
     },
-    "required": [
-        "direction",
-        "entry",
-        "stop_loss",
-        "take_profit",
-        "confidence",
-        "thoughts",
-    ],
+    "required": ["direction", "confidence", "thoughts"],
+    "additionalProperties": False,
 }

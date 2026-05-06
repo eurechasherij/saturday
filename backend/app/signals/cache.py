@@ -19,13 +19,15 @@ from app.providers.base import ProviderResponse
 log = logging.getLogger(__name__)
 
 
-def _hash(provider: str, model: str, temperature: float, prompt: str) -> str:
+def _hash(provider: str, model: str, temperature: float, prompt: str, system: str = "") -> str:
     h = hashlib.sha256()
     h.update(provider.encode())
     h.update(b"\0")
     h.update(model.encode())
     h.update(b"\0")
     h.update(f"{temperature:.6f}".encode())
+    h.update(b"\0")
+    h.update(system.encode())
     h.update(b"\0")
     h.update(prompt.encode())
     return h.hexdigest()
@@ -42,8 +44,8 @@ class PromptCache:
         # Shard by first two chars to avoid 1 huge directory.
         return self.root / key[:2] / f"{key}.json"
 
-    def key(self, provider: str, model: str, temperature: float, prompt: str) -> str:
-        return _hash(provider, model, temperature, prompt)
+    def key(self, provider: str, model: str, temperature: float, prompt: str, system: str = "") -> str:
+        return _hash(provider, model, temperature, prompt, system)
 
     def get(self, key: str) -> ProviderResponse | None:
         p = self._path(key)

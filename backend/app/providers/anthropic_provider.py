@@ -40,10 +40,21 @@ class AnthropicProvider(LLMProvider):
         model: str | None = None,
         temperature: float = 0.0,
         json_schema: dict | None = None,
+        system: str | None = None,
     ) -> ProviderResponse:
         if self._client is None:
             raise RuntimeError("Anthropic API key not configured")
         m = model or self.default_model
+
+        # Anthropic system message is a top-level kwarg, not a message role.
+        common_kwargs: dict = {
+            "model": m,
+            "max_tokens": 2048,
+            "temperature": temperature,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            common_kwargs["system"] = system
 
         # When a schema is provided, use tool-use to get structured output.
         if json_schema is not None:
@@ -53,22 +64,14 @@ class AnthropicProvider(LLMProvider):
                 "input_schema": json_schema,
             }
             resp = await self._client.messages.create(
-                model=m,
-                max_tokens=2048,
-                temperature=temperature,
+                **common_kwargs,
                 tools=[tool],
                 tool_choice={"type": "tool", "name": "emit_signal"},
-                messages=[{"role": "user", "content": prompt}],
             )
             tool_use = next((b for b in resp.content if b.type == "tool_use"), None)
             text = json.dumps(tool_use.input) if tool_use else ""
         else:
-            resp = await self._client.messages.create(
-                model=m,
-                max_tokens=2048,
-                temperature=temperature,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            resp = await self._client.messages.create(**common_kwargs)
             text = "".join(b.text for b in resp.content if b.type == "text")
 
         return ProviderResponse(

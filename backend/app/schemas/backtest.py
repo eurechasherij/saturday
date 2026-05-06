@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-BacktestStatus = Literal["pending", "running", "completed", "failed"]
+BacktestStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 
 
 class BacktestConfig(BaseModel):
@@ -25,6 +25,12 @@ class BacktestConfig(BaseModel):
     # Trigger config — only ask the LLM when price taps an unmitigated FVG/OB
     use_trigger: bool = True
     trigger_proximity_pct: float = 0.001  # 0.1% — how close price must come
+
+    # Risk management — levels computed by engine, not LLM
+    sl_atr_mult: float = 1.5    # stop_loss  = entry ± sl_atr_mult × ATR14
+    tp_atr_mult: float = 2.5    # take_profit = entry ± tp_atr_mult × ATR14  → R:R ≈ 1.67
+    atr_fallback_pct: float = 0.008  # 0.8% fallback when ATR not available
+    max_hold_bars: int = 48     # force-close after N engine-TF bars (48×1h = 2 days)
 
 
 class Trade(BaseModel):
@@ -76,5 +82,10 @@ class BacktestRunSummary(BaseModel):
     profit_factor: float | None = None
     sharpe: float | None = None
     trades: int = 0
+
+    # Exit breakdown (populated when completed)
+    tp_count: int = 0
+    sl_count: int = 0
+    timeout_count: int = 0
 
     error: str | None = None

@@ -38,6 +38,8 @@ export default function RunsPage() {
                   <TableHead className="text-right">Return</TableHead>
                   <TableHead className="text-right">Drawdown</TableHead>
                   <TableHead className="text-right">Win rate</TableHead>
+                  <TableHead className="text-right">PF</TableHead>
+                  <TableHead className="text-right">Sharpe</TableHead>
                   <TableHead>Started</TableHead>
                 </TableRow>
               </TableHeader>
@@ -57,15 +59,23 @@ export default function RunsPage() {
                       <Badge variant={statusVariant(r.status) as never}>{r.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right">{fmtNum(r.trades, 0)}</TableCell>
-                    <TableCell className="text-right">{fmtPct(r.total_return)}</TableCell>
+                    <TableCell className={`text-right font-medium ${r.total_return != null ? (r.total_return >= 0 ? "text-green-500" : "text-destructive") : ""}`}>
+                      {fmtPct(r.total_return)}
+                    </TableCell>
                     <TableCell className="text-right text-destructive">{fmtPct(r.max_drawdown)}</TableCell>
                     <TableCell className="text-right">{fmtPct(r.win_rate)}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {r.profit_factor != null ? fmtNum(r.profit_factor, 2) : "—"}
+                    </TableCell>
+                    <TableCell className={`text-right ${r.sharpe != null ? (r.sharpe >= 1 ? "text-green-500" : r.sharpe >= 0 ? "text-muted-foreground" : "text-destructive") : ""}`}>
+                      {r.sharpe != null ? fmtNum(r.sharpe, 2) : "—"}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{fmtDate(r.started_at)}</TableCell>
                   </TableRow>
                 ))}
                 {runs.data && runs.data.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center text-muted-foreground py-12">
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-12">
                       No runs yet. Configure one on the Backtest page.
                     </TableCell>
                   </TableRow>

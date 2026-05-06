@@ -1,12 +1,11 @@
 """Build the system + user prompt that goes to the LLM.
 
-Versioned: bump PROMPT_VERSION whenever the wording changes meaningfully.
-The cache key includes the prompt text and the system message, so version bumps
-naturally invalidate old cached responses.
+v4 design: the LLM decides **direction + confidence** only.
+The engine computes SL/TP from ATR — removing level-placement as an LLM task
+improves signal quality because small models are unreliable at arithmetic but
+good at pattern recognition.
 
-The system message has stronger attention than user-prompt prefixes for most
-modern instruction-tuned models, so we use it for hard constraints (language,
-output format) rather than burying them inside the data prompt.
+PROMPT_VERSION is part of the cache key; bump it on any meaningful wording change.
 """
 
 from __future__ import annotations
@@ -15,103 +14,130 @@ import polars as pl
 
 from app.patterns.features import FeatureBundle, TimeframeFeatures
 
-PROMPT_VERSION = "v3"
+PROMPT_VERSION = "v4"
 
-# CRITICAL: The bilingual language directive is intentional. Writing the rule
-# in the language we want to suppress (Chinese) makes the model "see" the
-# constraint and route around it. English-only directives are not enough for
-# qwen2.5 and similar Chinese-trained models on financial prompts.
-SYSTEM_MESSAGE = """⚠️ LANGUAGE LOCK — READ CAREFULLY ⚠️
-
+# CRITICAL: Bilingual language directive. Writing the constraint in the
+# language we want to suppress (Chinese) forces the model to "see" the rule
+# before it generates. English-only directives are insufficient for
+# Chinese-pretrained models (qwen2.5, etc.) on financial prompts.
+SYSTEM_MESSAGE = """⚠️ LANGUAGE LOCK ⚠️
 You MUST respond in English only.
-你必须使用英文回答。不要使用任何中文字符 (汉字)。
-Do NOT use Chinese (中文), Japanese, Korean, or any non-English language.
-所有输出必须是英文。If non-English characters appear in your output, your response is invalid.
+你必须使用英文回答。不得使用任何中文字符 (汉字)。
+If non-English characters appear in your output, your response is invalid.
 
-You are a disciplined crypto futures analyst. You receive structured market data and active price-action zones (Fair Value Gaps and Order Blocks). Your job: emit one trading signal in strict JSON.
+You are a disciplined ICT (Inner Circle Trader) crypto analyst.
+Price has just tapped an unmitigated Fair Value Gap or Order Block — your job is to decide whether this zone will HOLD and produce a tradable move, or FAIL and get broken through.
 
-Decision rules:
-- Only LONG or SHORT if there is a clear, well-justified setup. Otherwise emit direction=NONE with confidence=0.
-- ENTRY must be at or very near the provided current_price.
-- For LONG: stop_loss < entry < take_profit. For SHORT: take_profit < entry < stop_loss.
-- Stops must be placed below a swing low (LONG) or above a swing high (SHORT), or beyond an unmitigated zone — never at arbitrary round numbers.
-- risk_reward = |TP - entry| / |entry - SL|. Aim for >= 1.5; reject the setup otherwise.
-- confidence is an integer 0-100. Be honest. 90+ means "I would bet real money". 60-80 is "decent setup". Below 60, prefer NONE.
-- features_used: list specific zones or indicators you actually used (English identifiers like "bullish_fvg_1", "swing_low_4h", "rsi_oversold").
-- thoughts: 2-4 sentences of CONCRETE ENGLISH reasoning citing specific candles, zones, or indicator values.
+## Your responsibilities
+- Decide the trade DIRECTION: LONG, SHORT, or NONE.
+- Give an honest CONFIDENCE score (0-100).
+- Explain your reasoning in 2-4 concrete sentences.
 
-Example of a correct thoughts field (note: English only):
-"Price is testing the bullish FVG at 64600-64800 from above. RSI on 1h is recovering from 32 indicating exhaustion of the pullback. The 4h swing low at 63500 provides a logical stop. Targeting the prior 4h swing high at 65900 gives RR ~2.1."
+## You do NOT set entry, stop-loss, or take-profit
+The engine computes those from ATR automatically. Focus on zone quality and momentum.
 
-Output strict JSON matching the schema. No markdown, no code fences, no prose outside JSON. ENGLISH ONLY."""
+## Decision framework
+Ask yourself:
+1. ZONE QUALITY — is the FVG/OB fresh and unmitigated? How many times has price returned to it? (More touches = weaker)
+2. MOMENTUM ALIGNMENT — does RSI / MACD support the direction? (RSI < 35 favors LONG; > 65 favors SHORT. MACD hist turning matches direction)
+3. STRUCTURE — does the higher-timeframe (4h/1d) swing structure agree? Is price making HH/HL (bullish) or LH/LL (bearish)?
+4. CONFLUENCE — do multiple zones / timeframes agree? FVG + OB on the same level = strong.
+
+## Confidence scale
+- 80-100 → Strong confluence: clear zone, aligned momentum, multi-TF agreement. Would trade with real money.
+- 60-79  → Decent setup: zone is clean, at least one momentum confirmer.
+- 40-59  → Marginal: zone exists but conflicting signals or weak momentum.
+- 0-39   → Weak or contradictory. Emit NONE.
+
+## Rules
+- Emit NONE if the zone has been tested multiple times (usually breaks on 3rd+)
+- Emit NONE if momentum strongly opposes (e.g. RSI 75 for a LONG off FVG)
+- Emit NONE if HTF structure is against the trade
+- Do NOT force a trade. NONE is a valid, valuable answer.
+
+Output strict JSON — no markdown, no code fences, no prose outside JSON. ENGLISH ONLY."""
 
 
-def build_prompt(features: FeatureBundle, *, max_candles: int = 30) -> str:
-    """Build the per-request user message containing market data + zones."""
+def build_prompt(
+    features: FeatureBundle,
+    *,
+    trigger_reason: str | None = None,
+    max_candles: int = 30,
+) -> str:
+    """Build the per-request user message with market context and zone data."""
     parts: list[str] = []
     parts.append(f"symbol: {features.symbol}")
     parts.append(f"current_price: {features.current_price:.6f}")
+
+    if trigger_reason:
+        # Tell the LLM *why* we're evaluating this bar — the specific zone that was tapped.
+        parts.append(f"trigger: price just tapped → {trigger_reason}")
+
     parts.append("")
 
     for tf, tff in features.per_timeframe.items():
         parts.append(_render_timeframe(tff, max_candles))
         parts.append("")
 
-    parts.append("Now emit the trading signal as strict JSON. Reminder: respond in English only.")
+    parts.append(
+        "Decide: should we trade this zone tap? "
+        "Output JSON with direction, confidence, thoughts, features_used. "
+        "English only."
+    )
     return "\n".join(parts)
 
 
 def _render_timeframe(tff: TimeframeFeatures, max_candles: int) -> str:
-    lines = [f"=== Timeframe: {tff.timeframe} ==="]
+    lines = [f"=== {tff.timeframe} ==="]
 
     if tff.fvgs:
-        lines.append("Active Fair Value Gaps (unmitigated, near price):")
+        lines.append("Fair Value Gaps (unmitigated, near price):")
         for i, f in enumerate(tff.fvgs):
             lines.append(
                 f"  fvg_{i}: {f.type} | top={f.top:.6f} bottom={f.bottom:.6f} "
-                f"formed={f.formed_at.isoformat()}"
+                f"formed={f.formed_at.strftime('%Y-%m-%d %H:%M')}"
             )
     else:
-        lines.append("Active Fair Value Gaps: none")
+        lines.append("FVGs: none near price")
 
     if tff.order_blocks:
-        lines.append("Active Order Blocks (unmitigated, near price):")
+        lines.append("Order Blocks (unmitigated, near price):")
         for i, o in enumerate(tff.order_blocks):
             lines.append(
                 f"  ob_{i}: {o.type} | top={o.top:.6f} bottom={o.bottom:.6f} "
-                f"formed={o.formed_at.isoformat()}"
+                f"formed={o.formed_at.strftime('%Y-%m-%d %H:%M')}"
             )
     else:
-        lines.append("Active Order Blocks: none")
+        lines.append("OBs: none near price")
 
     if tff.swings:
-        lines.append("Recent swings:")
-        for s in tff.swings[-5:]:
-            lines.append(f"  swing_{s.type}: {s.price:.6f} @ {s.time.isoformat()}")
+        lines.append("Recent swing points:")
+        for s in tff.swings[-6:]:
+            lines.append(f"  {s.type}: {s.price:.6f} @ {s.time.strftime('%Y-%m-%d %H:%M')}")
 
-    lines.append(f"Last {min(max_candles, tff.candles.height)} candles (newest last):")
+    lines.append(f"Candles (last {min(max_candles, tff.candles.height)}, newest last):")
     lines.append(_format_candles(tff.candles.tail(max_candles)))
     return "\n".join(lines)
 
 
 def _format_candles(df: pl.DataFrame) -> str:
     cols = ["open_time", "open", "high", "low", "close", "volume"]
-    extras = [c for c in ("rsi_14", "macd", "macd_hist", "atr_14") if c in df.columns]
+    extras = [c for c in ("rsi_14", "macd_hist", "atr_14") if c in df.columns]
     cols += extras
 
     rows = []
     for r in df.select(cols).iter_rows(named=True):
-        time = r["open_time"].strftime("%Y-%m-%d %H:%M") if r["open_time"] else ""
+        time = r["open_time"].strftime("%m-%d %H:%M") if r["open_time"] else ""
         bits = [
             f"t={time}",
             f"o={r['open']:.4f}",
             f"h={r['high']:.4f}",
             f"l={r['low']:.4f}",
             f"c={r['close']:.4f}",
-            f"v={r['volume']:.1f}",
+            f"v={r['volume']:.0f}",
         ]
         for ex in extras:
             v = r[ex]
-            bits.append(f"{ex}={v:.3f}" if v is not None else f"{ex}=na")
+            bits.append(f"{ex}={v:.3f}" if v is not None else f"{ex}=?")
         rows.append("  " + " ".join(bits))
     return "\n".join(rows)

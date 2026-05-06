@@ -22,11 +22,18 @@ def compute_metrics(trades: pl.DataFrame, equity: pl.DataFrame) -> dict[str, flo
     closed = trades.filter(pl.col("exit_reason") != "OPEN")
     n = closed.height
     wins = closed.filter(pl.col("pnl") > 0).height
+    losses = closed.filter(pl.col("pnl") < 0).height
     win_rate = wins / n if n else None
 
     gross_win = float(closed.filter(pl.col("pnl") > 0)["pnl"].sum() or 0)
     gross_loss = abs(float(closed.filter(pl.col("pnl") < 0)["pnl"].sum() or 0))
     profit_factor = (gross_win / gross_loss) if gross_loss > 0 else None
+
+    tp_count = closed.filter(pl.col("exit_reason") == "TP").height
+    sl_count = closed.filter(pl.col("exit_reason") == "SL").height
+    timeout_count = closed.filter(pl.col("exit_reason") == "TIMEOUT").height
+    avg_win = (gross_win / wins) if wins > 0 else None
+    avg_loss = (gross_loss / losses) if losses > 0 else None
 
     if equity.is_empty():
         return {
@@ -37,6 +44,11 @@ def compute_metrics(trades: pl.DataFrame, equity: pl.DataFrame) -> dict[str, flo
             "max_drawdown": None,
             "sharpe": None,
             "final_equity": None,
+            "tp_count": tp_count,
+            "sl_count": sl_count,
+            "timeout_count": timeout_count,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
         }
 
     eq = equity.sort("time")
@@ -66,4 +78,9 @@ def compute_metrics(trades: pl.DataFrame, equity: pl.DataFrame) -> dict[str, flo
         "max_drawdown": max_dd,
         "sharpe": sharpe,
         "final_equity": eN,
+        "tp_count": tp_count,
+        "sl_count": sl_count,
+        "timeout_count": timeout_count,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
     }

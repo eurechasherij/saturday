@@ -43,14 +43,20 @@ class OpenAIProvider(LLMProvider):
         model: str | None = None,
         temperature: float = 0.0,
         json_schema: dict | None = None,
+        system: str | None = None,
     ) -> ProviderResponse:
         if self._client is None:
             raise RuntimeError("OpenAI API key not configured")
         m = model or self.default_model
 
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
         kwargs: dict = {
             "model": m,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "temperature": temperature,
         }
         if json_schema is not None:

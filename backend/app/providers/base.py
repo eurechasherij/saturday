@@ -37,4 +37,5 @@ class LLMProvider(Protocol):
         model: str | None = None,
         temperature: float = 0.0,
         json_schema: dict | None = None,
+        system: str | None = None,
     ) -> ProviderResponse: ...

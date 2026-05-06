@@ -10,7 +10,7 @@ from app.providers.registry import get_provider
 from app.schemas.signal import SIGNAL_JSON_SCHEMA, TradingSignal
 from app.signals.cache import prompt_cache
 from app.signals.parser import parse_signal_response
-from app.signals.prompt import PROMPT_VERSION, build_prompt
+from app.signals.prompt import PROMPT_VERSION, SYSTEM_MESSAGE, build_prompt
 
 log = logging.getLogger(__name__)
 
@@ -24,11 +24,12 @@ async def generate_signal(
     timeframes: list[str],
     temperature: float = 0.0,
     use_cache: bool = True,
+    trigger_reason: str | None = None,
 ) -> tuple[TradingSignal, bool]:
     """Returns (signal, cache_hit)."""
-    prompt = build_prompt(features)
+    prompt = build_prompt(features, trigger_reason=trigger_reason)
     prov = get_provider(provider)
-    cache_key = prompt_cache.key(provider, model, temperature, prompt)
+    cache_key = prompt_cache.key(provider, model, temperature, prompt, SYSTEM_MESSAGE)
 
     cached = prompt_cache.get(cache_key) if use_cache else None
     if cached is not None:
@@ -50,6 +51,7 @@ async def generate_signal(
         model=model,
         temperature=temperature,
         json_schema=SIGNAL_JSON_SCHEMA,
+        system=SYSTEM_MESSAGE,
     )
     if use_cache:
         prompt_cache.put(cache_key, resp)

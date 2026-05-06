@@ -1,15 +1,18 @@
+import asyncio
+import json
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
+from sse_starlette.sse import EventSourceResponse
 
 from app.config import settings
 from app.data import (
     fetch_recent_klines,
-    ingest_range,
+    ingest_range_stream,
     list_symbol_status,
     query_klines,
 )
-from app.schemas.data import IngestRequest, SymbolStatus
+from app.schemas.data import SymbolStatus
 
 router = APIRouter()
 
@@ -27,23 +30,33 @@ def get_defaults() -> dict[str, list[str]]:
     }
 
 
-@router.post("/ingest")
-def ingest(req: IngestRequest, bg: BackgroundTasks) -> dict[str, str]:
-    """Schedule a Binance Vision bulk ingest in the background.
+@router.get("/ingest/stream")
+async def ingest_stream(
+    symbol: str,
+    timeframe: str = "1h",
+    start: str = "",
+    end: str | None = None,
+) -> EventSourceResponse:
+    """Stream a Binance Vision ingest, one event per month.
 
-    The frontend should poll /symbols to see progress.
+    Frontend opens an EventSource on this URL. Closing the EventSource
+    cancels the ingest mid-flight; data already written is preserved.
     """
-    def _run() -> None:
-        try:
-            ingest_range(req.symbol, req.timeframe, start=req.start, end=req.end)
-        except Exception as e:  # noqa: BLE001
-            # Background task failures are logged by FastAPI's default handler;
-            # surface in /symbols when row counts don't increase.
-            import logging
-            logging.getLogger(__name__).exception("ingest failed: %s", e)
+    if not start:
+        raise HTTPException(status_code=400, detail="`start` is required (YYYY-MM)")
 
-    bg.add_task(_run)
-    return {"status": "scheduled", "symbol": req.symbol, "timeframe": req.timeframe}
+    async def event_gen():
+        try:
+            async for ev in ingest_range_stream(
+                symbol, timeframe, start=start, end=end or None
+            ):
+                yield {"event": ev["type"], "data": json.dumps(ev, default=str)}
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+
+    return EventSourceResponse(event_gen())
 
 
 @router.post("/refresh/{symbol}/{timeframe}")
@@ -68,7 +81,6 @@ def get_klines(
     if df.is_empty():
         return {"symbol": symbol, "timeframe": timeframe, "candles": []}
 
-    # convert to list of small dicts for the frontend chart
     rows = []
     for r in df.tail(limit).iter_rows(named=True):
         rows.append(

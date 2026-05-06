@@ -1,4 +1,9 @@
-"""Parse LLM JSON output → TradingSignal, with sanity checks."""
+"""Parse LLM JSON output → TradingSignal.
+
+v4: the LLM only returns direction + confidence + thoughts.
+Entry, stop_loss, take_profit are set by the engine (ATR-based) — so we no
+longer validate geometry here. Entry defaults to current_price for storage.
+"""
 
 from __future__ import annotations
 
@@ -49,7 +54,8 @@ def parse_signal_response(
         direction = "NONE"
 
     try:
-        entry = float(data.get("entry", 0) or 0)
+        # entry/sl/tp are optional — engine sets them. Default to current_price for record.
+        entry = float(data.get("entry", current_price) or current_price)
         sl = float(data.get("stop_loss", 0) or 0)
         tp = float(data.get("take_profit", 0) or 0)
         rr = float(data.get("risk_reward", 0) or 0)
@@ -59,7 +65,7 @@ def parse_signal_response(
 
     confidence = max(0, min(100, confidence))
 
-    sig = TradingSignal(
+    return TradingSignal(
         symbol=symbol,
         timeframes=timeframes,
         timestamp=timestamp,
@@ -76,20 +82,3 @@ def parse_signal_response(
         prompt_hash=prompt_hash,
         prompt_version=prompt_version,
     )
-
-    # Geometry sanity: drop the trade (force NONE) if the signal is internally inconsistent.
-    if sig.direction == "LONG" and not (sig.stop_loss < sig.entry < sig.take_profit):
-        log.info("signal demoted to NONE: LONG geometry invalid (e=%s sl=%s tp=%s)", entry, sl, tp)
-        sig.direction = "NONE"
-    elif sig.direction == "SHORT" and not (sig.take_profit < sig.entry < sig.stop_loss):
-        log.info("signal demoted to NONE: SHORT geometry invalid")
-        sig.direction = "NONE"
-
-    # Entry must be within 0.5% of current_price (LLMs sometimes drift)
-    if sig.direction != "NONE" and current_price > 0:
-        drift = abs(sig.entry - current_price) / current_price
-        if drift > 0.005:
-            log.info("signal demoted to NONE: entry drift %.2f%%", drift * 100)
-            sig.direction = "NONE"
-
-    return sig

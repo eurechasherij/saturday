@@ -131,9 +131,19 @@ export default function RunViewerPage() {
           <Stat label="Cache hits" value={fmtNum(r.cache_hits, 0)} />
           <Stat label="Trades" value={fmtNum(r.trades, 0)} />
           <Stat label="Win rate" value={fmtPct(r.win_rate)} />
-          <Stat label="Return" value={fmtPct(r.total_return)} />
+          <Stat label="Return" value={fmtPct(r.total_return)} tone={r.total_return != null ? (r.total_return >= 0 ? "good" : "bad") : undefined} />
           <Stat label="Max DD" value={fmtPct(r.max_drawdown)} tone="bad" />
         </div>
+
+        {r.status === "completed" && (r.tp_count > 0 || r.sl_count > 0 || r.timeout_count > 0) && (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <Stat label="TP exits" value={String(r.tp_count ?? 0)} tone="good" />
+            <Stat label="SL exits" value={String(r.sl_count ?? 0)} tone="bad" />
+            <Stat label="Timeout exits" value={String(r.timeout_count ?? 0)} />
+            <Stat label="Profit factor" value={r.profit_factor != null ? fmtNum(r.profit_factor, 2) : "—"} tone={r.profit_factor != null ? (r.profit_factor >= 1 ? "good" : "bad") : undefined} />
+            <Stat label="Sharpe" value={r.sharpe != null ? fmtNum(r.sharpe, 2) : "—"} tone={r.sharpe != null ? (r.sharpe >= 1 ? "good" : r.sharpe >= 0 ? undefined : "bad") : undefined} />
+          </div>
+        )}
 
         <Card>
           <CardHeader>
@@ -387,7 +397,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "go
     <Card>
       <CardContent className="p-4">
         <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-        <div className={`text-lg font-semibold mt-1 ${tone === "bad" ? "text-destructive" : ""}`}>
+        <div className={`text-lg font-semibold mt-1 ${tone === "bad" ? "text-destructive" : tone === "good" ? "text-green-500" : ""}`}>
           {value}
         </div>
       </CardContent>

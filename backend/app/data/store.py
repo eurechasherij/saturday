@@ -146,9 +146,10 @@ def list_symbol_status() -> list[SymbolStatus]:
     ]
 
 
-def _glob_has_files(glob: str) -> bool:
-    # DuckDB throws if glob matches nothing; cheap pre-check via filesystem
-    base = Path(glob.split("*")[0])
-    if not base.exists():
+def _glob_has_files(_glob: str) -> bool:
+    # DuckDB throws when its glob matches nothing. Cheap filesystem pre-check
+    # under the klines root — we don't try to interpret the partition pattern.
+    root = settings.parquet_dir / "klines"
+    if not root.exists():
         return False
-    return any(base.rglob("data.parquet"))
+    return any(root.rglob("data.parquet"))

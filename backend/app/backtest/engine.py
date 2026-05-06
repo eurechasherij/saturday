@@ -52,6 +52,7 @@ class _OpenPosition:
     confidence: int
     signal_id: str
     entry_equity: float
+    opened_at_bar: int = 0  # engine-bar index when position was opened
 
 
 @dataclass
@@ -192,7 +193,7 @@ async def _run_inner(
 
         # ---- 1. Resolve any open position first (intra-bar) ----
         if state.open_pos is not None:
-            _try_resolve(state, bar_time, high, low)
+            _try_resolve(state, bar_time, high, low, i, cfg.max_hold_bars)
 
         # ---- 2. Advance per-TF index pointers (O(1) amortized) ----
         rolling: dict[str, pl.DataFrame] = {}
@@ -244,6 +245,7 @@ async def _run_inner(
                         timestamp=bar_time,
                         timeframes=cfg.timeframes,
                         use_cache=True,
+                        trigger_reason=reason,
                     )
                 except Exception as e:  # noqa: BLE001
                     log.exception("signal generation failed at %s", bar_time)
@@ -313,18 +315,31 @@ async def _run_inner(
                     last_emit = i
 
                     if will_open:
+                        # ATR-based levels: engine owns SL/TP, not the LLM.
+                        # This guarantees consistent R:R regardless of model quality.
+                        atr = _get_atr(features, engine_tf)
+                        sl_dist = (atr * cfg.sl_atr_mult) if atr else (close * cfg.atr_fallback_pct)
+                        tp_dist = (atr * cfg.tp_atr_mult) if atr else (close * cfg.atr_fallback_pct * cfg.tp_atr_mult / cfg.sl_atr_mult)
+                        if signal.direction == "LONG":
+                            computed_sl = close - sl_dist
+                            computed_tp = close + tp_dist
+                        else:
+                            computed_sl = close + sl_dist
+                            computed_tp = close - tp_dist
+
                         notional = state.equity * cfg.position_pct
                         state.open_pos = _OpenPosition(
                             direction=signal.direction,
                             entry_time=bar_time,
                             entry_price=close,
-                            stop_loss=signal.stop_loss,
-                            take_profit=signal.take_profit,
+                            stop_loss=computed_sl,
+                            take_profit=computed_tp,
                             notional=notional,
                             leverage=cfg.leverage,
                             confidence=signal.confidence,
                             signal_id=signal.prompt_hash[:12],
                             entry_equity=state.equity,
+                            opened_at_bar=i,
                         )
 
         state.stage = "mark-equity"
@@ -379,6 +394,9 @@ async def _run_inner(
     summary.max_drawdown = metrics.get("max_drawdown")  # type: ignore[assignment]
     summary.sharpe = metrics.get("sharpe")  # type: ignore[assignment]
     summary.final_equity = metrics.get("final_equity")  # type: ignore[assignment]
+    summary.tp_count = int(metrics.get("tp_count") or 0)
+    summary.sl_count = int(metrics.get("sl_count") or 0)
+    summary.timeout_count = int(metrics.get("timeout_count") or 0)
     summary.triggers_fired = state.triggers_fired
     summary.llm_calls = state.llm_calls
     summary.cache_hits = state.cache_hits
@@ -428,9 +446,37 @@ def _check_trigger(
     return False, "no-zone-tap"
 
 
-def _try_resolve(state: _State, bar_time: datetime, high: float, low: float) -> None:
+def _get_atr(features: Any, engine_tf: str) -> float | None:
+    """Extract the last ATR14 value from the engine timeframe candles."""
+    from app.patterns.features import FeatureBundle
+    if not isinstance(features, FeatureBundle):
+        return None
+    tff = features.per_timeframe.get(engine_tf)
+    if tff is None or tff.candles.is_empty():
+        return None
+    if "atr_14" not in tff.candles.columns:
+        return None
+    val = tff.candles["atr_14"][-1]
+    return float(val) if val is not None else None
+
+
+def _try_resolve(
+    state: _State,
+    bar_time: datetime,
+    high: float,
+    low: float,
+    current_bar: int,
+    max_hold_bars: int,
+) -> None:
     pos = state.open_pos
     assert pos is not None
+
+    # Max hold timeout — force-close if held too long
+    if max_hold_bars > 0 and (current_bar - pos.opened_at_bar) >= max_hold_bars:
+        mid = (high + low) / 2  # approximate mid-bar exit
+        _close(state, bar_time, mid, "TIMEOUT")
+        return
+
     hit_tp = (pos.direction == "LONG" and high >= pos.take_profit) or (
         pos.direction == "SHORT" and low <= pos.take_profit
     )

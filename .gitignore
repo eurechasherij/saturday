@@ -33,3 +33,4 @@ data/raw/
 legacy/server/node_modules/
 legacy/client/node_modules/
 legacy/server/.env
+.gstack/
