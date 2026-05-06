@@ -18,20 +18,22 @@ log = logging.getLogger(__name__)
 
 _GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
-# Free models on Groq as of 2025. Check https://console.groq.com/docs/models for updates.
+# Models on Groq. Check https://console.groq.com/docs/models for the latest.
 _KNOWN_MODELS = [
-    "llama-3.3-70b-versatile",   # best quality, recommended
-    "llama-3.1-8b-instant",      # fastest, good for high-volume tests
-    "mixtral-8x7b-32768",        # longer context (32k)
-    "gemma2-9b-it",              # Google Gemma, solid JSON following
+    "openai/gpt-oss-120b",       # OpenAI open-weight 120B — best quality, 500 tok/s
+    "openai/gpt-oss-20b",        # OpenAI open-weight 20B — fastest (1000 tok/s), great for backtests
+    "llama-3.3-70b-versatile",   # Meta Llama 3.3 70B — solid fallback
+    "llama-3.1-8b-instant",      # Meta Llama 3.1 8B — ultra-fast, lower quality
+    "qwen/qwen3-32b",            # Qwen3 32B — strong reasoning
+    "meta-llama/llama-4-scout-17b-16e-instruct",  # Llama 4 Scout — multimodal
 ]
 
 
 class GroqProvider(LLMProvider):
-    """Groq Cloud — OpenAI-compatible, free tier, extremely low latency."""
+    """Groq Cloud — OpenAI-compatible, fast inference, GPT OSS models available."""
 
     name = "groq"
-    default_model = "llama-3.3-70b-versatile"
+    default_model = "openai/gpt-oss-20b"
 
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or settings.groq_api_key
