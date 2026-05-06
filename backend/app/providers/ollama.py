@@ -1,4 +1,9 @@
-"""Ollama provider — the default. Runs locally, free, no API key."""
+"""Ollama provider — the default. Runs locally, free, no API key.
+
+Uses chat() not generate() so we can pass a system message — system role has
+stronger attention than prefix-stuffing the user prompt, which is critical for
+hard constraints like "respond in English" with Chinese-trained models.
+"""
 
 from __future__ import annotations
 
@@ -17,9 +22,9 @@ class OllamaProvider(LLMProvider):
     name = "ollama"
     default_model = "qwen2.5:7b-instruct"
 
-    def __init__(self, host: str | None = None) -> None:
+    def __init__(self, host: str | None = None, timeout: float = 120.0) -> None:
         self.host = host or settings.ollama_host
-        self._client = ollama.AsyncClient(host=self.host)
+        self._client = ollama.AsyncClient(host=self.host, timeout=timeout)
 
     async def is_available(self) -> bool:
         try:
@@ -44,20 +49,27 @@ class OllamaProvider(LLMProvider):
         model: str | None = None,
         temperature: float = 0.0,
         json_schema: dict | None = None,
+        system: str | None = None,
     ) -> ProviderResponse:
         m = model or self.default_model
         options = {"temperature": temperature}
-        # Ollama supports passing a JSON schema via `format`
         format_arg: str | dict = json_schema if json_schema else "json"
 
-        resp = await self._client.generate(
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        resp = await self._client.chat(
             model=m,
-            prompt=prompt,
+            messages=messages,
             options=options,
             format=format_arg,
             stream=False,
         )
-        text = resp.response if hasattr(resp, "response") else resp.get("response", "")
+        # Response is a Mapping/object — handle both dict and pydantic-style attr access.
+        msg = resp.message if hasattr(resp, "message") else resp.get("message", {})
+        text = msg.content if hasattr(msg, "content") else msg.get("content", "")
         return ProviderResponse(
             text=text,
             model=m,

@@ -54,7 +54,7 @@ export type BacktestConfig = {
 
 export type BacktestRunSummary = {
   run_id: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   config: BacktestConfig;
   started_at: string;
   finished_at: string | null;
@@ -132,11 +132,15 @@ export const api = {
   // Data
   symbols: () => jsonReq<SymbolStatus[]>("/api/data/symbols"),
   defaults: () => jsonReq<{ symbols: string[]; timeframes: string[] }>("/api/data/defaults"),
-  ingest: (req: { symbol: string; timeframe: string; start: string; end?: string }) =>
-    jsonReq<{ status: string }>("/api/data/ingest", {
-      method: "POST",
-      body: JSON.stringify(req),
-    }),
+  ingestStreamUrl: (req: { symbol: string; timeframe: string; start: string; end?: string }) => {
+    const params = new URLSearchParams({
+      symbol: req.symbol,
+      timeframe: req.timeframe,
+      start: req.start,
+    });
+    if (req.end) params.set("end", req.end);
+    return `/api/data/ingest/stream?${params.toString()}`;
+  },
   refresh: (symbol: string, timeframe: string) =>
     jsonReq<{ rows_merged: number }>(`/api/data/refresh/${symbol}/${timeframe}`, { method: "POST" }),
   klines: (symbol: string, timeframe: string, limit = 500) =>
@@ -163,5 +167,12 @@ export const api = {
   trades: (id: string) => jsonReq<{ trades: Trade[] }>(`/api/backtest/runs/${id}/trades`),
   equity: (id: string) => jsonReq<{ equity: EquityPoint[] }>(`/api/backtest/runs/${id}/equity`),
   signals: (id: string) => jsonReq<{ signals: SignalRecord[] }>(`/api/backtest/runs/${id}/signals`),
-  streamUrl: (id: string) => `/api/backtest/runs/${id}/stream`,
+  runLog: (id: string, since: number) =>
+    jsonReq<{ events: any[]; cursor: number; running: boolean }>(
+      `/api/backtest/runs/${id}/log?since=${since}`
+    ),
+  cancelRun: (id: string) =>
+    jsonReq<{ cancelled: boolean; reason: string }>(`/api/backtest/runs/${id}`, {
+      method: "DELETE",
+    }),
 };

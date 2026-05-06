@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, RefreshCw } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { Plus, RefreshCw, X } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import CandleChart from "@/components/CandleChart";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,34 @@ import { api, type SymbolStatus } from "@/lib/api";
 import { fmtDate, fmtNum } from "@/lib/utils";
 
 const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];
+
+type IngestState = {
+  active: boolean;
+  symbol: string;
+  timeframe: string;
+  monthsTotal: number;
+  monthsDone: number;
+  monthsMissing: number;
+  rowsTotal: number;
+  currentMonth: string;
+  log: string[];
+  finished: boolean;
+  error: string | null;
+};
+
+const emptyIngest: IngestState = {
+  active: false,
+  symbol: "",
+  timeframe: "",
+  monthsTotal: 0,
+  monthsDone: 0,
+  monthsMissing: 0,
+  rowsTotal: 0,
+  currentMonth: "",
+  log: [],
+  finished: false,
+  error: null,
+};
 
 export default function DataPage() {
   const qc = useQueryClient();
@@ -36,21 +64,101 @@ export default function DataPage() {
     end: "",
   });
 
-  const ingest = useMutation({
-    mutationFn: () =>
-      api.ingest({
-        symbol: form.symbol,
-        timeframe: form.timeframe,
-        start: form.start,
-        end: form.end || undefined,
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["symbols"] }),
-  });
+  const [ingest, setIngest] = useState<IngestState>(emptyIngest);
+  const esRef = useRef<EventSource | null>(null);
 
   const refresh = useMutation({
     mutationFn: ({ s, t }: { s: string; t: string }) => api.refresh(s, t),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["symbols"] }),
   });
+
+  function startIngest() {
+    if (esRef.current) esRef.current.close();
+    const url = api.ingestStreamUrl({
+      symbol: form.symbol,
+      timeframe: form.timeframe,
+      start: form.start,
+      end: form.end || undefined,
+    });
+    setIngest({
+      ...emptyIngest,
+      active: true,
+      symbol: form.symbol,
+      timeframe: form.timeframe,
+      log: [`opening stream for ${form.symbol} ${form.timeframe} from ${form.start}…`],
+    });
+    const es = new EventSource(url);
+    esRef.current = es;
+
+    es.addEventListener("started", (e: MessageEvent) => {
+      const d = JSON.parse(e.data);
+      setIngest((s) => ({
+        ...s,
+        monthsTotal: d.months_total,
+        log: [...s.log, `started: ${d.months_total} months from ${d.start} to ${d.end}`],
+      }));
+    });
+    es.addEventListener("month_done", (e: MessageEvent) => {
+      const d = JSON.parse(e.data);
+      setIngest((s) => ({
+        ...s,
+        monthsDone: d.index,
+        rowsTotal: d.rows_total,
+        currentMonth: d.month,
+        log: [...s.log, `✓ ${d.month} — ${d.rows} rows (cumulative ${d.rows_total})`].slice(-50),
+      }));
+      qc.invalidateQueries({ queryKey: ["symbols"] });
+    });
+    es.addEventListener("month_missing", (e: MessageEvent) => {
+      const d = JSON.parse(e.data);
+      setIngest((s) => ({
+        ...s,
+        monthsMissing: s.monthsMissing + 1,
+        currentMonth: d.month,
+        log: [...s.log, `· ${d.month} — not on Vision (${d.reason})`].slice(-50),
+      }));
+    });
+    es.addEventListener("month_failed", (e: MessageEvent) => {
+      const d = JSON.parse(e.data);
+      setIngest((s) => ({
+        ...s,
+        monthsMissing: s.monthsMissing + 1,
+        log: [...s.log, `× ${d.month} — ${d.reason}`].slice(-50),
+      }));
+    });
+    es.addEventListener("completed", (e: MessageEvent) => {
+      const d = JSON.parse(e.data);
+      setIngest((s) => ({
+        ...s,
+        active: false,
+        finished: true,
+        rowsTotal: d.rows_total,
+        log: [...s.log, `done: ${d.rows_total} rows total`],
+      }));
+      es.close();
+      esRef.current = null;
+      qc.invalidateQueries({ queryKey: ["symbols"] });
+    });
+    es.addEventListener("error", (e: Event) => {
+      const data = (e as MessageEvent).data;
+      const msg = typeof data === "string" ? data : "stream error";
+      setIngest((s) => ({ ...s, active: false, error: msg, log: [...s.log, `error: ${msg}`] }));
+      es.close();
+      esRef.current = null;
+    });
+  }
+
+  function cancelIngest() {
+    esRef.current?.close();
+    esRef.current = null;
+    setIngest((s) => ({ ...s, active: false, log: [...s.log, "cancelled"] }));
+  }
+
+  useEffect(() => () => esRef.current?.close(), []);
+
+  const pct = ingest.monthsTotal > 0
+    ? Math.min(100, ((ingest.monthsDone + ingest.monthsMissing) / ingest.monthsTotal) * 100)
+    : 0;
 
   return (
     <div>
@@ -130,6 +238,7 @@ export default function DataPage() {
               <Select
                 value={form.symbol}
                 onValueChange={(v) => setForm({ ...form, symbol: v })}
+                disabled={ingest.active}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -144,6 +253,7 @@ export default function DataPage() {
               <Select
                 value={form.timeframe}
                 onValueChange={(v) => setForm({ ...form, timeframe: v })}
+                disabled={ingest.active}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -160,6 +270,7 @@ export default function DataPage() {
                   value={form.start}
                   onChange={(e) => setForm({ ...form, start: e.target.value })}
                   placeholder="2024-01"
+                  disabled={ingest.active}
                 />
               </div>
               <div>
@@ -168,23 +279,50 @@ export default function DataPage() {
                   value={form.end}
                   onChange={(e) => setForm({ ...form, end: e.target.value })}
                   placeholder="2025-04"
+                  disabled={ingest.active}
                 />
               </div>
             </div>
-            <Button
-              className="w-full"
-              disabled={ingest.isPending}
-              onClick={() => ingest.mutate()}
-            >
-              {ingest.isPending ? "Scheduled…" : "Ingest"}
-            </Button>
-            {ingest.isSuccess && (
-              <p className="text-xs text-muted-foreground">
-                Running in the background — table on the left will refresh as data lands.
-              </p>
+
+            {!ingest.active && (
+              <Button className="w-full" onClick={startIngest}>
+                Ingest
+              </Button>
             )}
-            {ingest.isError && (
-              <p className="text-xs text-destructive">{(ingest.error as Error).message}</p>
+            {ingest.active && (
+              <Button className="w-full" variant="destructive" onClick={cancelIngest}>
+                <X className="h-4 w-4 mr-1" /> Cancel
+              </Button>
+            )}
+
+            {(ingest.active || ingest.finished || ingest.error) && (
+              <div className="space-y-2 pt-2">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>
+                    {ingest.symbol} · {ingest.timeframe}
+                    {ingest.currentMonth && <> · <span className="font-mono">{ingest.currentMonth}</span></>}
+                  </span>
+                  <span>
+                    {ingest.monthsDone + ingest.monthsMissing}/{ingest.monthsTotal}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-300 ${
+                      ingest.error ? "bg-destructive" : ingest.finished ? "bg-success" : "bg-primary"
+                    }`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>✓ {ingest.monthsDone}</span>
+                  <span>· {ingest.monthsMissing} missing</span>
+                  <span>{fmtNum(ingest.rowsTotal, 0)} rows</span>
+                </div>
+                <pre className="text-[10px] font-mono text-muted-foreground bg-secondary/40 rounded-md p-2 max-h-40 overflow-auto">
+                  {ingest.log.slice(-12).join("\n")}
+                </pre>
+              </div>
             )}
           </CardContent>
         </Card>

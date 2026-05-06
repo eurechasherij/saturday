@@ -51,6 +51,11 @@ def build_features(
     for tf, df in candles_per_tf.items():
         if df.is_empty():
             continue
+        # Skip timeframes with too few bars to compute anything useful.
+        # 30 bars covers FVG (3-candle), basic swings, and gives the LLM enough
+        # candle history to reason. Below that the TF is just noise.
+        if df.height < 30:
+            continue
         enriched = add_indicators(df)
         fvgs = detect_fvgs(enriched)
         obs = detect_order_blocks(enriched)

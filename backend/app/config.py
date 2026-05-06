@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path(__file__).resolve().parents[2] / "data"
 
     # Default provider/model
-    default_provider: Literal["ollama", "openai", "anthropic"] = "ollama"
+    default_provider: Literal["ollama", "openai", "anthropic", "groq", "gemini"] = "ollama"
     default_model: str = "qwen2.5:7b-instruct"
 
     # Ollama
@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     # External keys (optional — only needed for non-Ollama providers)
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    groq_api_key: str | None = None      # https://console.groq.com — free tier
+    gemini_api_key: str | None = None    # https://aistudio.google.com — free tier
 
     # Binance
     binance_rest_base: str = "https://api.binance.com"

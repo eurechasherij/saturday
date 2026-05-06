@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { createChart, CandlestickSeries, type IChartApi, type Time } from "lightweight-charts";
+import { createChart, type IChartApi, type Time } from "lightweight-charts";
 import type { Candle } from "@/lib/api";
 
 interface Props {
@@ -28,7 +28,7 @@ export default function CandleChart({ candles, height = 360 }: Props) {
       width: containerRef.current.clientWidth,
       height,
     });
-    const series = chart.addSeries(CandlestickSeries, {
+    const series = chart.addCandlestickSeries({
       upColor: "#22c55e",
       downColor: "#ef4444",
       borderVisible: false,

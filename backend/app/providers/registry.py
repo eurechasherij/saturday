@@ -6,6 +6,8 @@ import logging
 
 from app.providers.anthropic_provider import AnthropicProvider
 from app.providers.base import LLMProvider
+from app.providers.gemini_provider import GeminiProvider
+from app.providers.groq_provider import GroqProvider
 from app.providers.ollama import OllamaProvider
 from app.providers.openai_provider import OpenAIProvider
 from app.schemas.provider import ProviderInfo
@@ -16,6 +18,8 @@ _REGISTRY: dict[str, LLMProvider] = {
     "ollama": OllamaProvider(),
     "openai": OpenAIProvider(),
     "anthropic": AnthropicProvider(),
+    "groq": GroqProvider(),
+    "gemini": GeminiProvider(),
 }
 
 
@@ -38,6 +42,10 @@ async def list_provider_info() -> list[ProviderInfo]:
         if not avail:
             if name == "ollama":
                 note = "Ollama not reachable. Start the daemon: `ollama serve`."
+            elif name == "groq":
+                note = "No API key. Free tier: https://console.groq.com → set SATURDAY_GROQ_API_KEY."
+            elif name == "gemini":
+                note = "No API key. Free tier: https://aistudio.google.com → set SATURDAY_GEMINI_API_KEY."
             else:
                 note = f"No API key configured (set SATURDAY_{name.upper()}_API_KEY)."
         out.append(

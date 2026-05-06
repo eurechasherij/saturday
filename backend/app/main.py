@@ -10,6 +10,12 @@ from app.config import settings
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings.ensure_dirs()
+    # Mark zombie runs from previous crashes / uvicorn reloads.
+    from app.backtest import manager as backtest_manager
+    n = backtest_manager.sweep_zombies()
+    if n:
+        import logging
+        logging.getLogger(__name__).info("swept %d zombie run(s) at startup", n)
     yield
 
 

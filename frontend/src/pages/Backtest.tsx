@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import NumericInput from "@/components/NumericInput";
 import { api, type BacktestConfig } from "@/lib/api";
 
 const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];
@@ -18,7 +19,11 @@ export default function BacktestPage() {
 
   const symbolOptions = Array.from(new Set((symbols.data ?? []).map((s) => s.symbol)));
 
-  const [cfg, setCfg] = useState<BacktestConfig>({
+  // UI form state. position_pct is stored here as a PERCENTAGE (10 = 10%) for
+  // human input. We convert to the API's 0-1 fraction at submit time.
+  type FormState = Omit<BacktestConfig, "position_pct"> & { position_pct_display: number };
+
+  const [cfg, setCfg] = useState<FormState>({
     symbol: "BTCUSDT",
     timeframes: ["1h", "4h"],
     start: "2024-01-01",
@@ -26,21 +31,39 @@ export default function BacktestPage() {
     provider: "ollama",
     model: "qwen2.5:7b-instruct",
     starting_equity: 10000,
-    position_pct: 0.1,
+    position_pct_display: 10,
     leverage: 1,
     confidence_threshold: 60,
     use_trigger: true,
     trigger_proximity_pct: 0.001,
   });
 
+  const valid =
+    cfg.timeframes.length > 0 &&
+    Number.isFinite(cfg.starting_equity) &&
+    cfg.starting_equity > 0 &&
+    Number.isFinite(cfg.position_pct_display) &&
+    cfg.position_pct_display > 0 &&
+    cfg.position_pct_display <= 100 &&
+    Number.isFinite(cfg.leverage) &&
+    cfg.leverage >= 1 &&
+    Number.isFinite(cfg.confidence_threshold) &&
+    cfg.confidence_threshold >= 0 &&
+    cfg.confidence_threshold <= 100;
+
   const create = useMutation({
-    mutationFn: (c: BacktestConfig) =>
-      api.createRun({
+    mutationFn: (c: FormState) => {
+      const body: BacktestConfig = {
         ...c,
+        position_pct: c.position_pct_display / 100,
         start: new Date(c.start).toISOString(),
         end: new Date(c.end).toISOString(),
-      }),
-    onSuccess: (run) => nav(`/runs/${run.run_id}?autostart=1`),
+      };
+      // FormState extends BacktestConfig minus position_pct; clean the extra key.
+      delete (body as unknown as { position_pct_display?: number }).position_pct_display;
+      return api.createRun(body);
+    },
+    onSuccess: (run) => nav(`/runs/${run.run_id}`),
   });
 
   const activeProvider = providers.data?.find((p) => p.name === cfg.provider);
@@ -167,12 +190,17 @@ export default function BacktestPage() {
                 />
               </div>
               <div>
-                <Label>Position %</Label>
+                <Label>Position % of equity</Label>
                 <Input
                   type="number"
-                  step="0.01"
-                  value={cfg.position_pct}
-                  onChange={(e) => setCfg({ ...cfg, position_pct: Number(e.target.value) })}
+                  inputMode="decimal"
+                  step="1"
+                  min="0.01"
+                  max="100"
+                  value={cfg.position_pct_display}
+                  onChange={(e) =>
+                    setCfg({ ...cfg, position_pct_display: Number(e.target.value) })
+                  }
                 />
               </div>
               <div>
@@ -195,11 +223,16 @@ export default function BacktestPage() {
 
             <Button
               className="w-full"
-              disabled={create.isPending || cfg.timeframes.length === 0}
+              disabled={create.isPending || !valid}
               onClick={() => create.mutate(cfg)}
             >
               {create.isPending ? "Creating run…" : "Create & start run"}
             </Button>
+            {!valid && (
+              <p className="text-xs text-muted-foreground">
+                Check inputs: timeframes selected, equity &gt; 0, position 0–100%, leverage ≥ 1, confidence 0–100.
+              </p>
+            )}
             {create.isError && (
               <p className="text-xs text-destructive">{(create.error as Error).message}</p>
             )}

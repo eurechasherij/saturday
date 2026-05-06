@@ -1,8 +1,4 @@
-import asyncio
-import json
-
 from fastapi import APIRouter, HTTPException
-from sse_starlette.sse import EventSourceResponse
 
 from app.backtest import (
     create_run,
@@ -11,7 +7,7 @@ from app.backtest import (
     load_equity,
     load_signals,
     load_trades,
-    run_backtest,
+    manager,
 )
 from app.schemas.backtest import BacktestConfig, BacktestRunSummary
 
@@ -53,30 +49,40 @@ def get_run_signals(run_id: str) -> dict:
     return {"signals": load_signals(run_id)}
 
 
+@router.get("/runs/{run_id}/log")
+def get_run_log(run_id: str, since: int = 0) -> dict:
+    """Pull recent engine events. Frontend polls this for live progress.
+    `since` is the cursor returned from the previous call.
+    """
+    if get_run(run_id) is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    events, cursor = manager.get_log(run_id, since=since)
+    return {
+        "events": events,
+        "cursor": cursor,
+        "running": manager.is_running(run_id),
+    }
+
+
 @router.post("/runs", response_model=BacktestRunSummary)
-def create_run_endpoint(config: BacktestConfig) -> BacktestRunSummary:
-    return create_run(config)
+async def create_and_start_run(config: BacktestConfig) -> BacktestRunSummary:
+    """Create the run record AND start it as a background task.
+
+    Must be `async def` — manager.start() calls asyncio.create_task(), which
+    requires a running event loop. FastAPI runs sync handlers in a threadpool
+    with no loop attached.
+    """
+    summary = create_run(config)
+    manager.start(summary)
+    return summary
 
 
-@router.get("/runs/{run_id}/stream")
-async def stream_run(run_id: str) -> EventSourceResponse:
-    """Run the backtest, streaming progress events as SSE."""
+@router.delete("/runs/{run_id}")
+async def cancel_run(run_id: str) -> dict[str, bool | str]:
     summary = get_run(run_id)
     if summary is None:
         raise HTTPException(status_code=404, detail="run not found")
-    if summary.status not in ("pending", "failed"):
-        raise HTTPException(
-            status_code=409,
-            detail=f"run is {summary.status}; create a new run to retry",
-        )
-
-    async def event_gen():
-        try:
-            async for ev in run_backtest(summary):
-                yield {"event": ev.get("type", "message"), "data": json.dumps(ev, default=str)}
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
-
-    return EventSourceResponse(event_gen())
+    if not manager.is_running(run_id):
+        return {"cancelled": False, "reason": "not running"}
+    manager.cancel(run_id)
+    return {"cancelled": True, "reason": "cancellation signal sent"}

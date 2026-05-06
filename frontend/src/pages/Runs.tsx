@@ -8,7 +8,15 @@ import { api } from "@/lib/api";
 import { fmtDate, fmtNum, fmtPct } from "@/lib/utils";
 
 const statusVariant = (s: string) =>
-  s === "completed" ? "success" : s === "failed" ? "destructive" : s === "running" ? "default" : "secondary";
+  s === "completed"
+    ? "success"
+    : s === "failed"
+    ? "destructive"
+    : s === "running"
+    ? "default"
+    : s === "cancelled"
+    ? "secondary"
+    : "secondary";
 
 export default function RunsPage() {
   const runs = useQuery({ queryKey: ["runs"], queryFn: api.listRuns, refetchInterval: 4000 });

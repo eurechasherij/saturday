@@ -46,7 +46,7 @@ def list_runs() -> list[BacktestRunSummary]:
     out: list[BacktestRunSummary] = []
     if not settings.backtests_dir.exists():
         return out
-    for d in sorted(settings.backtests_dir.iterdir(), reverse=True):
+    for d in settings.backtests_dir.iterdir():
         if not d.is_dir():
             continue
         sp = d / "summary.json"
@@ -55,6 +55,8 @@ def list_runs() -> list[BacktestRunSummary]:
                 out.append(BacktestRunSummary.model_validate_json(sp.read_text()))
             except Exception:
                 continue
+    # Newest first by started_at — run_ids are random UUIDs and don't sort chronologically.
+    out.sort(key=lambda s: s.started_at, reverse=True)
     return out
 
 

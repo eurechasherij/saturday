@@ -16,9 +16,23 @@ from ta.volatility import AverageTrueRange
 from ta.volume import OnBalanceVolumeIndicator
 
 
+_INDICATOR_COLS = ("rsi_14", "macd", "macd_signal", "macd_hist", "atr_14", "obv")
+
+# Slow MACD needs 26 closes; with the 9-period signal, 35 is the smallest size
+# where every column gets at least one real value. Below that, the `ta` library
+# raises IndexError instead of falling back gracefully.
+MIN_BARS_FOR_INDICATORS = 35
+
+
 def add_indicators(df: pl.DataFrame) -> pl.DataFrame:
+    """Attach indicator columns. If the frame is too short, columns are null-filled."""
     if df.is_empty():
         return df
+
+    if df.height < MIN_BARS_FOR_INDICATORS:
+        return df.with_columns(
+            *[pl.lit(None, dtype=pl.Float64).alias(c) for c in _INDICATOR_COLS]
+        )
 
     pdf = df.to_pandas()
     high: pd.Series = pdf["high"]
